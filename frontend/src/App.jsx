@@ -93,8 +93,9 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign }) => {
 const Column = ({ columnId, tickets, moveTicket, handleAssign }) => {
   const [{ isOver }, drop] = useDrop(() => ({
     accept: ItemTypes.TICKET,
-    drop: (item) => {
+    drop: (item, monitor) => {
       if (item.columnId !== columnId) {
+        // Move ticket to a new column
         moveTicket(item.id, item.columnId, columnId, item.index, null);
       }
     },
@@ -140,90 +141,118 @@ const App = () => {
   }, []);
 
   const fetchTickets = async () => {
-    const response = await axios.get('http://localhost:5000/tickets');
-    const fetchedTickets = response.data;
+    try {
+      const response = await axios.get('http://localhost:5000/tickets');
+      const fetchedTickets = response.data;
 
-    // Organize tickets into columns and sort by priority
-    const newColumns = {};
-    columnsOrder.forEach((column) => {
-      const columnTickets = fetchedTickets.filter(
-        (ticket) => ticket.status === column
-      );
-      // Sort tickets by priority (High to Low)
-      newColumns[column] = columnTickets.sort(
-        (a, b) => priorityWeights[b.priority] - priorityWeights[a.priority]
-      );
-    });
-    setColumns(newColumns);
-    setTickets(fetchedTickets);
+      // Organize tickets into columns and sort by priority
+      const newColumns = {};
+      columnsOrder.forEach((column) => {
+        const columnTickets = fetchedTickets.filter(
+          (ticket) => ticket.status === column
+        );
+        // Sort tickets by priority (High to Low)
+        newColumns[column] = columnTickets.sort(
+          (a, b) => priorityWeights[b.priority] - priorityWeights[a.priority]
+        );
+      });
+      setColumns(newColumns);
+      setTickets(fetchedTickets);
+    } catch (error) {
+      console.error('Failed to fetch tickets:', error);
+    }
   };
 
   // Handle ticket movement between columns or within the same column
   const moveTicket = async (ticketId, sourceColumnId, destColumnId, dragIndex, hoverIndex) => {
-    const sourceColumn = [...columns[sourceColumnId]];
-    const ticketIndex = sourceColumn.findIndex((t) => t.id === ticketId);
-    const [movedTicket] = sourceColumn.splice(ticketIndex, 1);
+    try {
+      // Create a deep copy of the columns to avoid mutating state directly
+      const newColumns = { ...columns };
+      const sourceColumn = [...newColumns[sourceColumnId]];
+      const ticketIndex = sourceColumn.findIndex((t) => t.id === ticketId);
 
-    // Update ticket status and assignee logic
-    let updatedTicket = { ...movedTicket, status: destColumnId };
-    
-    // Unassign when moving to "Ready for Review"
-    if (destColumnId === 'Ready for Review') {
-      updatedTicket = { ...updatedTicket, assignee: '' };
-    }
+      if (ticketIndex === -1) {
+        console.error(`Ticket with ID ${ticketId} not found in column ${sourceColumnId}`);
+        return;
+      }
 
-    // If moving within the same column (reordering)
-    if (sourceColumnId === destColumnId) {
-      const destColumn = [...sourceColumn];
-      destColumn.splice(hoverIndex, 0, updatedTicket);
+      const [movedTicket] = sourceColumn.splice(ticketIndex, 1);
 
-      // Update columns state
-      setColumns({
-        ...columns,
-        [sourceColumnId]: destColumn,
-      });
+      // Update ticket status and assignee logic
+      let updatedTicket = { ...movedTicket };
+      if (sourceColumnId !== destColumnId) {
+        updatedTicket = { ...updatedTicket, status: destColumnId };
+        // Unassign when moving to "Ready for Review"
+        if (destColumnId === 'Ready for Review') {
+          updatedTicket = { ...updatedTicket, assignee: '' };
+        }
+      }
 
-      // Update the backend with the new order (optional, since status didn't change)
-      await axios.put(`http://localhost:5000/tickets/${updatedTicket.id}`, updatedTicket);
-    } else {
-      // Moving to a different column
-      const destColumn = [...columns[destColumnId]];
-      destColumn.push(updatedTicket);
+      // If moving within the same column (reordering)
+      if (sourceColumnId === destColumnId) {
+        const destColumn = [...sourceColumn];
+        destColumn.splice(hoverIndex, 0, updatedTicket);
 
-      // Sort the destination column by priority
-      const sortedDestColumn = destColumn.sort(
-        (a, b) => priorityWeights[b.priority] - priorityWeights[a.priority]
-      );
+        // Update columns state
+        newColumns[sourceColumnId] = destColumn;
+        setColumns(newColumns);
 
-      // Update columns state
-      setColumns({
-        ...columns,
-        [sourceColumnId]: sourceColumn,
-        [destColumnId]: sortedDestColumn,
-      });
+        // Update the backend (optional, since status didn't change)
+        await axios.put(`http://localhost:5000/tickets/${updatedTicket.id}`, updatedTicket);
+      } else {
+        // Moving to a different column
+        const destColumn = [...newColumns[destColumnId]];
+        destColumn.push(updatedTicket);
 
-      // Update ticket in the backend
-      await axios.put(`http://localhost:5000/tickets/${updatedTicket.id}`, updatedTicket);
+        // Sort the destination column by priority
+        const sortedDestColumn = destColumn.sort(
+          (a, b) => priorityWeights[b.priority] - priorityWeights[a.priority]
+        );
+
+        // Update columns state
+        newColumns[sourceColumnId] = sourceColumn;
+        newColumns[destColumnId] = sortedDestColumn;
+        setColumns(newColumns);
+
+        // Update ticket in the backend
+        try {
+          await axios.put(`http://localhost:5000/tickets/${updatedTicket.id}`, updatedTicket);
+          console.log(`Successfully moved ticket ${ticketId} to ${destColumnId}`);
+        } catch (error) {
+          console.error('Failed to update ticket in backend:', error);
+          // Revert the state if the backend update fails
+          fetchTickets(); // Refresh the state from the backend
+        }
+      }
+    } catch (error) {
+      console.error('Error in moveTicket:', error);
+      // Refresh the state from the backend to ensure consistency
+      fetchTickets();
     }
   };
 
   // Handle assignee change
   const handleAssign = async (ticketId, columnId, newAssignee) => {
-    const ticket = columns[columnId].find((t) => t.id === ticketId);
-    const updatedTicket = { ...ticket, assignee: newAssignee };
+    try {
+      const ticket = columns[columnId].find((t) => t.id === ticketId);
+      const updatedTicket = { ...ticket, assignee: newAssignee };
 
-    // Update ticket in the column
-    const updatedColumn = columns[columnId].map((t) =>
-      t.id === ticketId ? updatedTicket : t
-    );
+      // Update ticket in the column
+      const updatedColumn = columns[columnId].map((t) =>
+        t.id === ticketId ? updatedTicket : t
+      );
 
-    setColumns({
-      ...columns,
-      [columnId]: updatedColumn,
-    });
+      setColumns({
+        ...columns,
+        [columnId]: updatedColumn,
+      });
 
-    // Update ticket in the backend
-    await axios.put(`http://localhost:5000/tickets/${ticketId}`, updatedTicket);
+      // Update ticket in the backend
+      await axios.put(`http://localhost:5000/tickets/${ticketId}`, updatedTicket);
+    } catch (error) {
+      console.error('Failed to assign ticket:', error);
+      fetchTickets(); // Refresh the state to ensure consistency
+    }
   };
 
   // Handle new ticket form submission
