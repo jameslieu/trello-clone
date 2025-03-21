@@ -71,12 +71,20 @@ app.put('/tickets/:id', async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const updatedTicket = { ...tickets[ticketIndex], ...req.body, updatedAt: new Date().toISOString() };
+    // Update the ticket with the new data
+    const updatedTicket = {
+      ...tickets[ticketIndex],
+      ...req.body,
+      updatedAt: new Date().toISOString(),
+      order: parseInt(req.body.order, 10) || tickets[ticketIndex].order, // Ensure order is a number
+    };
     tickets[ticketIndex] = updatedTicket;
 
+    // Write the entire ticket list back to the CSV to persist the update
     await writeTickets(tickets);
     res.json(updatedTicket);
   } catch (error) {
+    console.error('Error in PUT /tickets/:id:', error);
     res.status(500).json({ error: 'Failed to update ticket' });
   }
 });

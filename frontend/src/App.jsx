@@ -64,7 +64,7 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
   return (
     <div
       ref={ref}
-      className={`ticket ${ticket.priority.toLowerCase()}`} // Add class based on priority for color-coding
+      className={`ticket ${ticket.priority.toLowerCase()}`}
       style={{ opacity: isDragging ? 0.5 : 1 }}
     >
       <h3>{ticket.title}</h3>
@@ -165,9 +165,14 @@ const App = () => {
     }
   };
 
+  // Helper function to add a delay between requests
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
   // Handle ticket movement between columns or within the same column
   const moveTicket = async (ticketId, sourceColumnId, destColumnId, dragIndex, hoverIndex) => {
     try {
+      console.log(`Moving ticket ${ticketId} from ${sourceColumnId} to ${destColumnId}`);
+
       // Create a deep copy of the columns to avoid mutating state directly
       const newColumns = { ...columns };
       const sourceColumn = [...newColumns[sourceColumnId]];
@@ -205,12 +210,12 @@ const App = () => {
         newColumns[sourceColumnId] = updatedDestColumn;
         setColumns(newColumns);
 
-        // Update all tickets in the backend
-        await Promise.all(
-          updatedDestColumn.map((ticket) =>
-            axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket)
-          )
-        );
+        // Update all tickets in the backend with a slight delay between requests
+        for (const ticket of updatedDestColumn) {
+          console.log(`Updating ticket ${ticket.id} with order ${ticket.order}`);
+          await axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket);
+          await delay(50); // Add a 50ms delay to avoid overwhelming the backend
+        }
       } else {
         // Moving to a different column
         const destColumn = [...newColumns[destColumnId]];
@@ -222,22 +227,27 @@ const App = () => {
           order: index,
         }));
 
+        // Update the order field for all tickets in the source column
+        const updatedSourceColumn = sourceColumn.map((ticket, index) => ({
+          ...ticket,
+          order: index,
+        }));
+
         // Update columns state
-        newColumns[sourceColumnId] = sourceColumn;
+        newColumns[sourceColumnId] = updatedSourceColumn;
         newColumns[destColumnId] = updatedDestColumn;
         setColumns(newColumns);
 
         // Update all tickets in the backend (for both source and destination columns)
-        const allTickets = [
-          ...sourceColumn,
-          ...updatedDestColumn,
-        ];
-        await Promise.all(
-          allTickets.map((ticket) =>
-            axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket)
-          )
-        );
+        const allTickets = [...updatedSourceColumn, ...updatedDestColumn];
+        for (const ticket of allTickets) {
+          console.log(`Updating ticket ${ticket.id} with status ${ticket.status} and order ${ticket.order}`);
+          await axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket);
+          await delay(50); // Add a 50ms delay to avoid overwhelming the backend
+        }
       }
+
+      console.log('Move completed successfully');
     } catch (error) {
       console.error('Error in moveTicket:', error);
       // Refresh the state from the backend to ensure consistency
