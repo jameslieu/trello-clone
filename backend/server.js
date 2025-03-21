@@ -13,7 +13,12 @@ const CSV_FILE = './tickets.csv';
 // Helper function to read tickets from CSV
 const readTickets = async () => {
   const fileContent = await fs.readFile(CSV_FILE);
-  return parse(fileContent, { columns: true, skip_empty_lines: true });
+  const tickets = parse(fileContent, { columns: true, skip_empty_lines: true });
+  // Ensure order is a number
+  return tickets.map((ticket) => ({
+    ...ticket,
+    order: parseInt(ticket.order, 10) || 0,
+  }));
 };
 
 // Helper function to write tickets to CSV
@@ -46,6 +51,7 @@ app.post('/tickets', async (req, res) => {
       sprint: req.body.sprint || 'Sprint 1',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      order: 0, // New tickets start at the top (order 0)
     };
 
     tickets.push(newTicket);
@@ -72,6 +78,23 @@ app.put('/tickets/:id', async (req, res) => {
     res.json(updatedTicket);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update ticket' });
+  }
+});
+
+// DELETE endpoint to delete a ticket
+app.delete('/tickets/:id', async (req, res) => {
+  try {
+    const tickets = await readTickets();
+    const ticketIndex = tickets.findIndex((ticket) => ticket.id === req.params.id);
+    if (ticketIndex === -1) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    tickets.splice(ticketIndex, 1);
+    await writeTickets(tickets);
+    res.status(204).send();
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete ticket' });
   }
 });
 

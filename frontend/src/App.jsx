@@ -27,7 +27,7 @@ const priorityWeights = {
 };
 
 // Ticket component (draggable)
-const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign }) => {
+const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete }) => {
   const ref = useRef(null);
 
   const [{ isDragging }, drag] = useDrag(() => ({
@@ -64,7 +64,7 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign }) => {
   return (
     <div
       ref={ref}
-      className="ticket"
+      className={`ticket ${ticket.priority.toLowerCase()}`} // Add class based on priority for color-coding
       style={{ opacity: isDragging ? 0.5 : 1 }}
     >
       <h3>{ticket.title}</h3>
@@ -85,12 +85,15 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign }) => {
           <option value="Diana">Diana</option>
         </select>
       )}
+      <button className="delete-button" onClick={() => handleDelete(ticket.id, columnId)}>
+        Delete
+      </button>
     </div>
   );
 };
 
 // Column component (droppable)
-const Column = ({ columnId, tickets, moveTicket, handleAssign }) => {
+const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete }) => {
   const [{ isOver }, drop] = useDrop(() => ({
     accept: ItemTypes.TICKET,
     drop: (item, monitor) => {
@@ -116,6 +119,7 @@ const Column = ({ columnId, tickets, moveTicket, handleAssign }) => {
             columnId={columnId}
             moveTicket={moveTicket}
             handleAssign={handleAssign}
+            handleDelete={handleDelete}
           />
         ))}
       </div>
@@ -145,16 +149,14 @@ const App = () => {
       const response = await axios.get('http://localhost:5000/tickets');
       const fetchedTickets = response.data;
 
-      // Organize tickets into columns and sort by priority
+      // Organize tickets into columns and sort by order
       const newColumns = {};
       columnsOrder.forEach((column) => {
         const columnTickets = fetchedTickets.filter(
           (ticket) => ticket.status === column
         );
-        // Sort tickets by priority (High to Low)
-        newColumns[column] = columnTickets.sort(
-          (a, b) => priorityWeights[b.priority] - priorityWeights[a.priority]
-        );
+        // Sort tickets by order
+        newColumns[column] = columnTickets.sort((a, b) => a.order - b.order);
       });
       setColumns(newColumns);
       setTickets(fetchedTickets);
@@ -193,36 +195,48 @@ const App = () => {
         const destColumn = [...sourceColumn];
         destColumn.splice(hoverIndex, 0, updatedTicket);
 
+        // Update the order field for all tickets in the column
+        const updatedDestColumn = destColumn.map((ticket, index) => ({
+          ...ticket,
+          order: index,
+        }));
+
         // Update columns state
-        newColumns[sourceColumnId] = destColumn;
+        newColumns[sourceColumnId] = updatedDestColumn;
         setColumns(newColumns);
 
-        // Update the backend (optional, since status didn't change)
-        await axios.put(`http://localhost:5000/tickets/${updatedTicket.id}`, updatedTicket);
+        // Update all tickets in the backend
+        await Promise.all(
+          updatedDestColumn.map((ticket) =>
+            axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket)
+          )
+        );
       } else {
         // Moving to a different column
         const destColumn = [...newColumns[destColumnId]];
         destColumn.push(updatedTicket);
 
-        // Sort the destination column by priority
-        const sortedDestColumn = destColumn.sort(
-          (a, b) => priorityWeights[b.priority] - priorityWeights[a.priority]
-        );
+        // Update the order field for all tickets in the destination column
+        const updatedDestColumn = destColumn.map((ticket, index) => ({
+          ...ticket,
+          order: index,
+        }));
 
         // Update columns state
         newColumns[sourceColumnId] = sourceColumn;
-        newColumns[destColumnId] = sortedDestColumn;
+        newColumns[destColumnId] = updatedDestColumn;
         setColumns(newColumns);
 
-        // Update ticket in the backend
-        try {
-          await axios.put(`http://localhost:5000/tickets/${updatedTicket.id}`, updatedTicket);
-          console.log(`Successfully moved ticket ${ticketId} to ${destColumnId}`);
-        } catch (error) {
-          console.error('Failed to update ticket in backend:', error);
-          // Revert the state if the backend update fails
-          fetchTickets(); // Refresh the state from the backend
-        }
+        // Update all tickets in the backend (for both source and destination columns)
+        const allTickets = [
+          ...sourceColumn,
+          ...updatedDestColumn,
+        ];
+        await Promise.all(
+          allTickets.map((ticket) =>
+            axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket)
+          )
+        );
       }
     } catch (error) {
       console.error('Error in moveTicket:', error);
@@ -251,6 +265,19 @@ const App = () => {
       await axios.put(`http://localhost:5000/tickets/${ticketId}`, updatedTicket);
     } catch (error) {
       console.error('Failed to assign ticket:', error);
+      fetchTickets(); // Refresh the state to ensure consistency
+    }
+  };
+
+  // Handle ticket deletion
+  const handleDelete = async (ticketId, columnId) => {
+    try {
+      await axios.delete(`http://localhost:5000/tickets/${ticketId}`);
+
+      // Refresh tickets
+      await fetchTickets();
+    } catch (error) {
+      console.error('Failed to delete ticket:', error);
       fetchTickets(); // Refresh the state to ensure consistency
     }
   };
@@ -359,6 +386,7 @@ const App = () => {
               tickets={columns[columnId] || []}
               moveTicket={moveTicket}
               handleAssign={handleAssign}
+              handleDelete={handleDelete}
             />
           ))}
         </div>
