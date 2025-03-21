@@ -32,6 +32,30 @@ app.get('/tickets', async (req, res) => {
   }
 });
 
+// POST endpoint to create a new ticket
+app.post('/tickets', async (req, res) => {
+  try {
+    const tickets = await readTickets();
+    const newTicket = {
+      id: (tickets.length + 1).toString(), // Simple ID generation
+      title: req.body.title,
+      description: req.body.description,
+      status: req.body.status || 'ToDo',
+      priority: req.body.priority || 'Medium',
+      assignee: req.body.assignee || '',
+      sprint: req.body.sprint || 'Sprint 1',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    tickets.push(newTicket);
+    await writeTickets(tickets);
+    res.status(201).json(newTicket);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create ticket' });
+  }
+});
+
 // PUT endpoint to update a ticket
 app.put('/tickets/:id', async (req, res) => {
   try {
