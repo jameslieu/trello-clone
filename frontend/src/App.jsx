@@ -27,7 +27,14 @@ const priorityWeights = {
 };
 
 // Ticket component (draggable)
-const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete, isLoading }) => {
+const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete, handleEdit, isLoading, loadingAction }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    title: ticket.title,
+    description: ticket.description,
+    priority: ticket.priority,
+  });
+
   const ref = useRef(null);
 
   const [{ isDragging }, drag] = useDrag(() => ({
@@ -36,13 +43,13 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
-    canDrag: !isLoading, // Prevent dragging while loading
+    canDrag: !isLoading && !loadingAction && !isEditing, // Prevent dragging while loading or editing
   }));
 
   const [, drop] = useDrop(() => ({
     accept: ItemTypes.TICKET,
     hover: (item, monitor) => {
-      if (!ref.current || isLoading) return;
+      if (!ref.current || isLoading || loadingAction || isEditing) return;
 
       const dragIndex = item.index;
       const hoverIndex = index;
@@ -62,48 +69,103 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
 
   drag(drop(ref));
 
+  const handleEditSubmit = (e) => {
+    e.preventDefault();
+    handleEdit(ticket.id, columnId, editForm);
+    setIsEditing(false);
+  };
+
   return (
     <div
       ref={ref}
       className={`ticket ${ticket.priority.toLowerCase()}`}
       style={{ opacity: isDragging ? 0.5 : 1 }}
     >
-      <h3>{ticket.title}</h3>
-      <p>{ticket.description}</p>
-      <p>Priority: {ticket.priority} (Weight: {priorityWeights[ticket.priority]})</p>
-      <p>Assignee: {ticket.assignee || 'Unassigned'}</p>
-      {columnId === 'Ready for Review' && !ticket.assignee && (
-        <select
-          onChange={(e) => handleAssign(ticket.id, columnId, e.target.value)}
-          defaultValue=""
-          disabled={isLoading}
-        >
-          <option value="" disabled>
-            Assign to...
-          </option>
-          <option value="Alice">Alice</option>
-          <option value="Bob">Bob</option>
-          <option value="Charlie">Charlie</option>
-          <option value="Diana">Diana</option>
-        </select>
+      {isEditing ? (
+        <form onSubmit={handleEditSubmit} className="edit-form">
+          <div>
+            <label>Title:</label>
+            <input
+              type="text"
+              value={editForm.title}
+              onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label>Description:</label>
+            <textarea
+              value={editForm.description}
+              onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label>Priority:</label>
+            <select
+              value={editForm.priority}
+              onChange={(e) => setEditForm({ ...editForm, priority: e.target.value })}
+            >
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
+          </div>
+          <button type="submit" disabled={loadingAction}>
+            {loadingAction ? 'Saving...' : 'Save'}
+          </button>
+          <button type="button" onClick={() => setIsEditing(false)} disabled={loadingAction}>
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <>
+          <h3>{ticket.title}</h3>
+          <p>{ticket.description}</p>
+          <p>Priority: {ticket.priority} (Weight: {priorityWeights[ticket.priority]})</p>
+          <p>Assignee: {ticket.assignee || 'Unassigned'}</p>
+          {columnId === 'Ready for Review' && !ticket.assignee && (
+            <select
+              onChange={(e) => handleAssign(ticket.id, columnId, e.target.value)}
+              defaultValue=""
+              disabled={isLoading || loadingAction}
+            >
+              <option value="" disabled>
+                Assign to...
+              </option>
+              <option value="Alice">Alice</option>
+              <option value="Bob">Bob</option>
+              <option value="Charlie">Charlie</option>
+              <option value="Diana">Diana</option>
+            </select>
+          )}
+          <div className="ticket-actions">
+            <button
+              onClick={() => setIsEditing(true)}
+              disabled={isLoading || loadingAction}
+            >
+              Edit
+            </button>
+            <button
+              className="delete-button"
+              onClick={() => handleDelete(ticket.id, columnId)}
+              disabled={isLoading || loadingAction}
+            >
+              {loadingAction ? 'Deleting...' : 'Delete'}
+            </button>
+          </div>
+        </>
       )}
-      <button
-        className="delete-button"
-        onClick={() => handleDelete(ticket.id, columnId)}
-        disabled={isLoading}
-      >
-        Delete
-      </button>
     </div>
   );
 };
 
 // Column component (droppable)
-const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, isLoading }) => {
+const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, handleEdit, isLoading, loadingAction }) => {
   const [{ isOver }, drop] = useDrop(() => ({
     accept: ItemTypes.TICKET,
     drop: (item, monitor) => {
-      if (isLoading) return;
+      if (isLoading || loadingAction) return;
       if (item.columnId !== columnId) {
         // Move ticket to a new column
         moveTicket(item.id, item.columnId, columnId, item.index, null);
@@ -127,7 +189,9 @@ const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, isL
             moveTicket={moveTicket}
             handleAssign={handleAssign}
             handleDelete={handleDelete}
+            handleEdit={handleEdit}
             isLoading={isLoading}
+            loadingAction={loadingAction}
           />
         ))}
       </div>
@@ -146,7 +210,9 @@ const App = () => {
     assignee: '',
     sprint: 'Sprint 1',
   });
-  const [isLoading, setIsLoading] = useState(true); // Add loading state
+  const [isLoading, setIsLoading] = useState(true); // Initial loading state
+  const [loadingAction, setLoadingAction] = useState(false); // Loading state for actions
+  const [errorMessage, setErrorMessage] = useState(''); // Error message state
 
   // Fetch tickets from the backend
   useEffect(() => {
@@ -156,6 +222,7 @@ const App = () => {
   const fetchTickets = async () => {
     try {
       setIsLoading(true);
+      setErrorMessage('');
       const response = await axios.get('http://localhost:5000/tickets');
       const fetchedTickets = response.data;
 
@@ -172,6 +239,7 @@ const App = () => {
       setTickets(fetchedTickets);
     } catch (error) {
       console.error('Failed to fetch tickets:', error);
+      setErrorMessage('Failed to load tickets. Please try again later.');
     } finally {
       setIsLoading(false);
     }
@@ -182,12 +250,14 @@ const App = () => {
 
   // Handle ticket movement between columns or within the same column
   const moveTicket = async (ticketId, sourceColumnId, destColumnId, dragIndex, hoverIndex) => {
-    if (isLoading) {
-      console.log('Move aborted: App is still loading');
+    if (isLoading || loadingAction) {
+      console.log('Move aborted: App is still loading or another action is in progress');
       return;
     }
 
     try {
+      setLoadingAction(true);
+      setErrorMessage('');
       console.log(`Moving ticket ${ticketId} from ${sourceColumnId} (index ${dragIndex}) to ${destColumnId}${hoverIndex !== null ? ` (index ${hoverIndex})` : ''}`);
 
       // Create a deep copy of the columns to avoid mutating state directly
@@ -289,16 +359,21 @@ const App = () => {
       console.log('Move completed successfully');
     } catch (error) {
       console.error('Error in moveTicket:', error);
+      setErrorMessage('Failed to move ticket. Please try again.');
       // Refresh the state from the backend to ensure consistency
       fetchTickets();
+    } finally {
+      setLoadingAction(false);
     }
   };
 
   // Handle assignee change
   const handleAssign = async (ticketId, columnId, newAssignee) => {
-    if (isLoading) return;
+    if (isLoading || loadingAction) return;
 
     try {
+      setLoadingAction(true);
+      setErrorMessage('');
       const ticket = columns[columnId].find((t) => t.id === ticketId);
       const updatedTicket = { ...ticket, assignee: newAssignee };
 
@@ -317,31 +392,73 @@ const App = () => {
       await fetchTickets(); // Refresh to ensure consistency
     } catch (error) {
       console.error('Failed to assign ticket:', error);
+      setErrorMessage('Failed to assign ticket. Please try again.');
       fetchTickets(); // Refresh the state to ensure consistency
+    } finally {
+      setLoadingAction(false);
     }
   };
 
   // Handle ticket deletion
   const handleDelete = async (ticketId, columnId) => {
-    if (isLoading) return;
+    if (isLoading || loadingAction) return;
 
     try {
+      setLoadingAction(true);
+      setErrorMessage('');
       await axios.delete(`http://localhost:5000/tickets/${ticketId}`);
 
       // Refresh tickets
       await fetchTickets();
     } catch (error) {
       console.error('Failed to delete ticket:', error);
+      setErrorMessage('Failed to delete ticket. Please try again.');
       fetchTickets(); // Refresh the state to ensure consistency
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  // Handle ticket editing
+  const handleEdit = async (ticketId, columnId, updatedData) => {
+    if (isLoading || loadingAction) return;
+
+    try {
+      setLoadingAction(true);
+      setErrorMessage('');
+      const ticket = columns[columnId].find((t) => t.id === ticketId);
+      const updatedTicket = { ...ticket, ...updatedData };
+
+      // Update ticket in the column
+      const updatedColumn = columns[columnId].map((t) =>
+        t.id === ticketId ? updatedTicket : t
+      );
+
+      setColumns({
+        ...columns,
+        [columnId]: updatedColumn,
+      });
+
+      // Update ticket in the backend
+      await axios.put(`http://localhost:5000/tickets/${ticketId}`, updatedTicket);
+      await fetchTickets(); // Refresh to ensure consistency
+    } catch (error) {
+      console.error('Failed to edit ticket:', error);
+      setErrorMessage('Failed to edit ticket. Please try again.');
+      fetchTickets(); // Refresh the state to ensure consistency
+    } finally {
+      setLoadingAction(false);
     }
   };
 
   // Handle new ticket form submission
   const handleCreateTicket = async (e) => {
     e.preventDefault();
-    if (isLoading) return;
+    if (isLoading || loadingAction) return;
 
     try {
+      setLoadingAction(true);
+      setErrorMessage('');
       const response = await axios.post('http://localhost:5000/tickets', newTicket);
       const createdTicket = response.data;
 
@@ -358,6 +475,9 @@ const App = () => {
       });
     } catch (error) {
       console.error('Failed to create ticket:', error);
+      setErrorMessage('Failed to create ticket. Please try again.');
+    } finally {
+      setLoadingAction(false);
     }
   };
 
@@ -365,6 +485,13 @@ const App = () => {
     <DndProvider backend={HTML5Backend}>
       <div className="app">
         <h1>Trello Clone</h1>
+
+        {errorMessage && (
+          <div className="error-message">
+            {errorMessage}
+            <button onClick={() => setErrorMessage('')}>Dismiss</button>
+          </div>
+        )}
 
         {isLoading ? (
           <div className="loading">Loading tickets...</div>
@@ -383,7 +510,7 @@ const App = () => {
                       setNewTicket({ ...newTicket, title: e.target.value })
                     }
                     required
-                    disabled={isLoading}
+                    disabled={isLoading || loadingAction}
                   />
                 </div>
                 <div>
@@ -394,7 +521,7 @@ const App = () => {
                       setNewTicket({ ...newTicket, description: e.target.value })
                     }
                     required
-                    disabled={isLoading}
+                    disabled={isLoading || loadingAction}
                   />
                 </div>
                 <div>
@@ -404,7 +531,7 @@ const App = () => {
                     onChange={(e) =>
                       setNewTicket({ ...newTicket, priority: e.target.value })
                     }
-                    disabled={isLoading}
+                    disabled={isLoading || loadingAction}
                   >
                     <option value="High">High</option>
                     <option value="Medium">Medium</option>
@@ -418,7 +545,7 @@ const App = () => {
                     onChange={(e) =>
                       setNewTicket({ ...newTicket, assignee: e.target.value })
                     }
-                    disabled={isLoading}
+                    disabled={isLoading || loadingAction}
                   >
                     <option value="">Unassigned</option>
                     <option value="Alice">Alice</option>
@@ -435,11 +562,11 @@ const App = () => {
                     onChange={(e) =>
                       setNewTicket({ ...newTicket, sprint: e.target.value })
                     }
-                    disabled={isLoading}
+                    disabled={isLoading || loadingAction}
                   />
                 </div>
-                <button type="submit" disabled={isLoading}>
-                  Create Ticket
+                <button type="submit" disabled={isLoading || loadingAction}>
+                  {loadingAction ? 'Creating...' : 'Create Ticket'}
                 </button>
               </form>
             </div>
@@ -454,7 +581,9 @@ const App = () => {
                   moveTicket={moveTicket}
                   handleAssign={handleAssign}
                   handleDelete={handleDelete}
+                  handleEdit={handleEdit}
                   isLoading={isLoading}
+                  loadingAction={loadingAction}
                 />
               ))}
             </div>
