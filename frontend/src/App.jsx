@@ -27,7 +27,7 @@ const priorityWeights = {
 };
 
 // Ticket component (draggable)
-const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete, handleEdit, isLoading, loadingAction }) => {
+const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete, handleEdit, isLoading, loadingAction, isSelected, onSelect }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     title: ticket.title,
@@ -78,9 +78,17 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
   return (
     <div
       ref={ref}
-      className={`ticket ${ticket.priority.toLowerCase()}`}
+      className={`ticket ${ticket.priority.toLowerCase()} ${isSelected ? 'selected' : ''}`}
       style={{ opacity: isDragging ? 0.5 : 1 }}
     >
+      <div className="ticket-checkbox">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => onSelect(ticket.id)}
+          disabled={isLoading || loadingAction || isEditing}
+        />
+      </div>
       {isEditing ? (
         <form onSubmit={handleEditSubmit} className="edit-form">
           <div>
@@ -124,6 +132,8 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
           <p>{ticket.description}</p>
           <p>Priority: {ticket.priority} (Weight: {priorityWeights[ticket.priority]})</p>
           <p>Assignee: {ticket.assignee || 'Unassigned'}</p>
+          <p>Sprint: {ticket.sprint}</p>
+          <p>Created: {new Date(ticket.createdAt).toLocaleDateString()}</p>
           {columnId === 'Ready for Review' && !ticket.assignee && (
             <select
               onChange={(e) => handleAssign(ticket.id, columnId, e.target.value)}
@@ -148,7 +158,7 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
             </button>
             <button
               className="delete-button"
-              onClick={() => handleDelete(ticket.id, columnId)}
+              onClick={() => handleDelete(ticket.id, columnId, ticket.title)}
               disabled={isLoading || loadingAction}
             >
               {loadingAction ? 'Deleting...' : 'Delete'}
@@ -161,7 +171,7 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
 };
 
 // Column component (droppable)
-const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, handleEdit, isLoading, loadingAction }) => {
+const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, handleEdit, isLoading, loadingAction, sortBy, onSortChange, selectedTickets, onSelectTicket }) => {
   const [{ isOver }, drop] = useDrop(() => ({
     accept: ItemTypes.TICKET,
     drop: (item, monitor) => {
@@ -178,7 +188,16 @@ const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, han
 
   return (
     <div ref={drop} className="column" style={{ backgroundColor: isOver ? '#e0e0e0' : '#f4f5f7' }}>
-      <h2>{columnId}</h2>
+      <div className="column-header">
+        <h2>{columnId}</h2>
+        <select value={sortBy} onChange={(e) => onSortChange(columnId, e.target.value)} disabled={isLoading || loadingAction}>
+          <option value="order">Default (Drag Order)</option>
+          <option value="priority-desc">Priority (High to Low)</option>
+          <option value="priority-asc">Priority (Low to High)</option>
+          <option value="created-desc">Created (Newest to Oldest)</option>
+          <option value="created-asc">Created (Oldest to Newest)</option>
+        </select>
+      </div>
       <div className="ticket-list">
         {tickets.map((ticket, index) => (
           <Ticket
@@ -192,6 +211,8 @@ const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, han
             handleEdit={handleEdit}
             isLoading={isLoading}
             loadingAction={loadingAction}
+            isSelected={selectedTickets.includes(ticket.id)}
+            onSelect={onSelectTicket}
           />
         ))}
       </div>
@@ -202,6 +223,7 @@ const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, han
 // Main App component
 const App = () => {
   const [tickets, setTickets] = useState([]);
+  const [filteredTickets, setFilteredTickets] = useState([]);
   const [columns, setColumns] = useState({});
   const [newTicket, setNewTicket] = useState({
     title: '',
@@ -213,6 +235,15 @@ const App = () => {
   const [isLoading, setIsLoading] = useState(true); // Initial loading state
   const [loadingAction, setLoadingAction] = useState(false); // Loading state for actions
   const [errorMessage, setErrorMessage] = useState(''); // Error message state
+  const [filters, setFilters] = useState({
+    priority: '',
+    assignee: '',
+    sprint: '',
+  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null); // State for delete confirmation
+  const [sortByColumn, setSortByColumn] = useState({}); // State for sorting per column
+  const [selectedTickets, setSelectedTickets] = useState([]); // State for selected tickets
 
   // Fetch tickets from the backend
   useEffect(() => {
@@ -225,24 +256,171 @@ const App = () => {
       setErrorMessage('');
       const response = await axios.get('http://localhost:5000/tickets');
       const fetchedTickets = response.data;
-
-      // Organize tickets into columns and sort by order
-      const newColumns = {};
-      columnsOrder.forEach((column) => {
-        const columnTickets = fetchedTickets.filter(
-          (ticket) => ticket.status === column
-        );
-        // Sort tickets by order
-        newColumns[column] = columnTickets.sort((a, b) => a.order - b.order);
-      });
-      setColumns(newColumns);
       setTickets(fetchedTickets);
+      applyFiltersAndSearch(fetchedTickets, filters, searchQuery);
     } catch (error) {
       console.error('Failed to fetch tickets:', error);
       setErrorMessage('Failed to load tickets. Please try again later.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Apply filters, search, and sorting to tickets
+  const applyFiltersAndSearch = (ticketsToFilter, currentFilters, currentSearchQuery) => {
+    let filtered = [...ticketsToFilter];
+
+    // Apply filters
+    if (currentFilters.priority) {
+      filtered = filtered.filter((ticket) => ticket.priority === currentFilters.priority);
+    }
+    if (currentFilters.assignee) {
+      filtered = filtered.filter((ticket) => ticket.assignee === currentFilters.assignee);
+    }
+    if (currentFilters.sprint) {
+      filtered = filtered.filter((ticket) => ticket.sprint === currentFilters.sprint);
+    }
+
+    // Apply search
+    if (currentSearchQuery) {
+      const query = currentSearchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (ticket) =>
+          ticket.title.toLowerCase().includes(query) ||
+          ticket.description.toLowerCase().includes(query)
+      );
+    }
+
+    setFilteredTickets(filtered);
+
+    // Organize filtered tickets into columns and apply sorting
+    const newColumns = {};
+    columnsOrder.forEach((column) => {
+      let columnTickets = filtered.filter((ticket) => ticket.status === column);
+      const sortBy = sortByColumn[column] || 'order';
+
+      // Apply sorting
+      if (sortBy === 'priority-desc') {
+        columnTickets = columnTickets.sort((a, b) => priorityWeights[b.priority] - priorityWeights[a.priority]);
+      } else if (sortBy === 'priority-asc') {
+        columnTickets = columnTickets.sort((a, b) => priorityWeights[a.priority] - priorityWeights[b.priority]);
+      } else if (sortBy === 'created-desc') {
+        columnTickets = columnTickets.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      } else if (sortBy === 'created-asc') {
+        columnTickets = columnTickets.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      } else {
+        columnTickets = columnTickets.sort((a, b) => a.order - b.order);
+      }
+
+      newColumns[column] = columnTickets;
+    });
+    setColumns(newColumns);
+  };
+
+  // Handle filter changes
+  const handleFilterChange = (e) => {
+    const { name, value } = e.target;
+    const updatedFilters = { ...filters, [name]: value };
+    setFilters(updatedFilters);
+    applyFiltersAndSearch(tickets, updatedFilters, searchQuery);
+  };
+
+  // Handle search input change
+  const handleSearchChange = (e) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    applyFiltersAndSearch(tickets, filters, query);
+  };
+
+  // Handle sort change for a column
+  const handleSortChange = (columnId, sortBy) => {
+    const updatedSortByColumn = { ...sortByColumn, [columnId]: sortBy };
+    setSortByColumn(updatedSortByColumn);
+    applyFiltersAndSearch(tickets, filters, searchQuery);
+  };
+
+  // Handle ticket selection
+  const handleSelectTicket = (ticketId) => {
+    setSelectedTickets((prev) =>
+      prev.includes(ticketId)
+        ? prev.filter((id) => id !== ticketId)
+        : [...prev, ticketId]
+    );
+  };
+
+  // Bulk action: Move selected tickets to a new column
+  const handleBulkMove = async (destColumnId) => {
+    if (isLoading || loadingAction) return;
+
+    try {
+      setLoadingAction(true);
+      setErrorMessage('');
+
+      const updatedTickets = tickets.map((ticket) => {
+        if (selectedTickets.includes(ticket.id)) {
+          return { ...ticket, status: destColumnId, order: 0 };
+        }
+        return ticket;
+      });
+
+      // Update all affected tickets in the backend
+      for (const ticket of updatedTickets) {
+        if (selectedTickets.includes(ticket.id)) {
+          await axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket);
+          await delay(50);
+        }
+      }
+
+      // Fetch the latest data from the backend
+      await fetchTickets();
+      setSelectedTickets([]);
+    } catch (error) {
+      console.error('Failed to move tickets:', error);
+      setErrorMessage('Failed to move tickets. Please try again.');
+      fetchTickets();
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  // Bulk action: Assign selected tickets to a user
+  const handleBulkAssign = async (assignee) => {
+    if (isLoading || loadingAction) return;
+
+    try {
+      setLoadingAction(true);
+      setErrorMessage('');
+
+      const updatedTickets = tickets.map((ticket) => {
+        if (selectedTickets.includes(ticket.id)) {
+          return { ...ticket, assignee };
+        }
+        return ticket;
+      });
+
+      // Update all affected tickets in the backend
+      for (const ticket of updatedTickets) {
+        if (selectedTickets.includes(ticket.id)) {
+          await axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket);
+          await delay(50);
+        }
+      }
+
+      // Fetch the latest data from the backend
+      await fetchTickets();
+      setSelectedTickets([]);
+    } catch (error) {
+      console.error('Failed to assign tickets:', error);
+      setErrorMessage('Failed to assign tickets. Please try again.');
+      fetchTickets();
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  // Bulk action: Delete selected tickets
+  const handleBulkDelete = () => {
+    setShowDeleteConfirm({ bulk: true, ticketIds: selectedTickets });
   };
 
   // Helper function to add a delay between requests
@@ -399,23 +577,40 @@ const App = () => {
     }
   };
 
-  // Handle ticket deletion
-  const handleDelete = async (ticketId, columnId) => {
+  // Handle ticket deletion with confirmation
+  const handleDelete = (ticketId, columnId, ticketTitle) => {
+    setShowDeleteConfirm({ ticketId, columnId, ticketTitle });
+  };
+
+  const confirmDelete = async () => {
     if (isLoading || loadingAction) return;
 
     try {
       setLoadingAction(true);
       setErrorMessage('');
-      await axios.delete(`http://localhost:5000/tickets/${ticketId}`);
+
+      if (showDeleteConfirm.bulk) {
+        // Bulk delete
+        for (const ticketId of showDeleteConfirm.ticketIds) {
+          await axios.delete(`http://localhost:5000/tickets/${ticketId}`);
+          await delay(50);
+        }
+        setSelectedTickets([]);
+      } else {
+        // Single delete
+        const { ticketId } = showDeleteConfirm;
+        await axios.delete(`http://localhost:5000/tickets/${ticketId}`);
+      }
 
       // Refresh tickets
       await fetchTickets();
     } catch (error) {
-      console.error('Failed to delete ticket:', error);
-      setErrorMessage('Failed to delete ticket. Please try again.');
+      console.error('Failed to delete ticket(s):', error);
+      setErrorMessage('Failed to delete ticket(s). Please try again.');
       fetchTickets(); // Refresh the state to ensure consistency
     } finally {
       setLoadingAction(false);
+      setShowDeleteConfirm(null);
     }
   };
 
@@ -493,10 +688,141 @@ const App = () => {
           </div>
         )}
 
+        {showDeleteConfirm && (
+          <div className="delete-confirm">
+            <div className="delete-confirm-content">
+              <h3>Confirm Deletion</h3>
+              <p>
+                {showDeleteConfirm.bulk
+                  ? `Are you sure you want to delete ${showDeleteConfirm.ticketIds.length} selected tickets?`
+                  : `Are you sure you want to delete the ticket "${showDeleteConfirm.ticketTitle}"?`}
+              </p>
+              <div className="delete-confirm-buttons">
+                <button onClick={confirmDelete} disabled={loadingAction}>
+                  {loadingAction ? 'Deleting...' : 'Yes, Delete'}
+                </button>
+                <button onClick={() => setShowDeleteConfirm(null)} disabled={loadingAction}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="loading">Loading tickets...</div>
         ) : (
           <>
+            {/* Bulk Actions Section */}
+            {selectedTickets.length > 0 && (
+              <div className="bulk-actions">
+                <span>{selectedTickets.length} ticket(s) selected</span>
+                <div className="bulk-action-controls">
+                  <select
+                    onChange={(e) => handleBulkMove(e.target.value)}
+                    defaultValue=""
+                    disabled={isLoading || loadingAction}
+                  >
+                    <option value="" disabled>
+                      Move to...
+                    </option>
+                    {columnsOrder.map((column) => (
+                      <option key={column} value={column}>
+                        {column}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    onChange={(e) => handleBulkAssign(e.target.value)}
+                    defaultValue=""
+                    disabled={isLoading || loadingAction}
+                  >
+                    <option value="" disabled>
+                      Assign to...
+                    </option>
+                    <option value="Alice">Alice</option>
+                    <option value="Bob">Bob</option>
+                    <option value="Charlie">Charlie</option>
+                    <option value="Diana">Diana</option>
+                    <option value="">Unassigned</option>
+                  </select>
+                  <button
+                    className="bulk-delete-button"
+                    onClick={handleBulkDelete}
+                    disabled={isLoading || loadingAction}
+                  >
+                    Delete Selected
+                  </button>
+                  <button
+                    onClick={() => setSelectedTickets([])}
+                    disabled={isLoading || loadingAction}
+                  >
+                    Clear Selection
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Filter and Search Section */}
+            <div className="filter-search">
+              <div className="filters">
+                <div>
+                  <label>Filter by Priority:</label>
+                  <select
+                    name="priority"
+                    value={filters.priority}
+                    onChange={handleFilterChange}
+                    disabled={isLoading || loadingAction}
+                  >
+                    <option value="">All</option>
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Filter by Assignee:</label>
+                  <select
+                    name="assignee"
+                    value={filters.assignee}
+                    onChange={handleFilterChange}
+                    disabled={isLoading || loadingAction}
+                  >
+                    <option value="">All</option>
+                    <option value="Alice">Alice</option>
+                    <option value="Bob">Bob</option>
+                    <option value="Charlie">Charlie</option>
+                    <option value="Diana">Diana</option>
+                    <option value="">Unassigned</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Filter by Sprint:</label>
+                  <select
+                    name="sprint"
+                    value={filters.sprint}
+                    onChange={handleFilterChange}
+                    disabled={isLoading || loadingAction}
+                  >
+                    <option value="">All</option>
+                    <option value="Sprint 1">Sprint 1</option>
+                    <option value="Sprint 2">Sprint 2</option>
+                    <option value="Sprint 3">Sprint 3</option>
+                  </select>
+                </div>
+              </div>
+              <div className="search">
+                <label>Search:</label>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={handleSearchChange}
+                  placeholder="Search by title or description..."
+                  disabled={isLoading || loadingAction}
+                />
+              </div>
+            </div>
+
             {/* Form to create a new ticket */}
             <div className="create-ticket">
               <h2>Create New Ticket</h2>
@@ -556,14 +882,17 @@ const App = () => {
                 </div>
                 <div>
                   <label>Sprint:</label>
-                  <input
-                    type="text"
+                  <select
                     value={newTicket.sprint}
                     onChange={(e) =>
                       setNewTicket({ ...newTicket, sprint: e.target.value })
                     }
                     disabled={isLoading || loadingAction}
-                  />
+                  >
+                    <option value="Sprint 1">Sprint 1</option>
+                    <option value="Sprint 2">Sprint 2</option>
+                    <option value="Sprint 3">Sprint 3</option>
+                  </select>
                 </div>
                 <button type="submit" disabled={isLoading || loadingAction}>
                   {loadingAction ? 'Creating...' : 'Create Ticket'}
@@ -584,6 +913,10 @@ const App = () => {
                   handleEdit={handleEdit}
                   isLoading={isLoading}
                   loadingAction={loadingAction}
+                  sortBy={sortByColumn[columnId] || 'order'}
+                  onSortChange={handleSortChange}
+                  selectedTickets={selectedTickets}
+                  onSelectTicket={handleSelectTicket}
                 />
               ))}
             </div>
