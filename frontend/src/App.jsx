@@ -27,13 +27,16 @@ const priorityWeights = {
 };
 
 // Ticket component (draggable)
-const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete, handleEdit, isLoading, loadingAction, isSelected, onSelect }) => {
+const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete, handleEdit, handleAddComment, isLoading, loadingAction, isSelected, onSelect }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     title: ticket.title,
     description: ticket.description,
     priority: ticket.priority,
   });
+  const [newComment, setNewComment] = useState('');
+  const [showComments, setShowComments] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const ref = useRef(null);
 
@@ -73,6 +76,13 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
     e.preventDefault();
     handleEdit(ticket.id, columnId, editForm);
     setIsEditing(false);
+  };
+
+  const handleCommentSubmit = (e) => {
+    e.preventDefault();
+    if (!newComment.trim()) return;
+    handleAddComment(ticket.id, columnId, newComment);
+    setNewComment('');
   };
 
   return (
@@ -149,6 +159,61 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
               <option value="Diana">Diana</option>
             </select>
           )}
+          {/* Comments Section */}
+          <div className="ticket-section">
+            <button onClick={() => setShowComments(!showComments)} className="toggle-button">
+              {showComments ? 'Hide Comments' : `Show Comments (${ticket.comments.length})`}
+            </button>
+            {showComments && (
+              <div className="comments-section">
+                {ticket.comments.length > 0 ? (
+                  <ul>
+                    {ticket.comments.map((comment, index) => (
+                      <li key={index}>
+                        <p>{comment.text}</p>
+                        <small>{new Date(comment.timestamp).toLocaleString()}</small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>No comments yet.</p>
+                )}
+                <form onSubmit={handleCommentSubmit} className="comment-form">
+                  <textarea
+                    value={newComment}
+                    onChange={(e) => setNewComment(e.target.value)}
+                    placeholder="Add a comment..."
+                    disabled={isLoading || loadingAction}
+                  />
+                  <button type="submit" disabled={isLoading || loadingAction || !newComment.trim()}>
+                    Add Comment
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+          {/* History Section */}
+          <div className="ticket-section">
+            <button onClick={() => setShowHistory(!showHistory)} className="toggle-button">
+              {showHistory ? 'Hide History' : `Show History (${ticket.history.length})`}
+            </button>
+            {showHistory && (
+              <div className="history-section">
+                {ticket.history.length > 0 ? (
+                  <ul>
+                    {ticket.history.map((entry, index) => (
+                      <li key={index}>
+                        <p>{entry.action}</p>
+                        <small>{new Date(entry.timestamp).toLocaleString()}</small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>No history available.</p>
+                )}
+              </div>
+            )}
+          </div>
           <div className="ticket-actions">
             <button
               onClick={() => setIsEditing(true)}
@@ -171,7 +236,7 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
 };
 
 // Column component (droppable)
-const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, handleEdit, isLoading, loadingAction, sortBy, onSortChange, selectedTickets, onSelectTicket }) => {
+const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, handleEdit, handleAddComment, isLoading, loadingAction, sortBy, onSortChange, selectedTickets, onSelectTicket }) => {
   const [{ isOver }, drop] = useDrop(() => ({
     accept: ItemTypes.TICKET,
     drop: (item, monitor) => {
@@ -209,6 +274,7 @@ const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, han
             handleAssign={handleAssign}
             handleDelete={handleDelete}
             handleEdit={handleEdit}
+            handleAddComment={handleAddComment}
             isLoading={isLoading}
             loadingAction={loadingAction}
             isSelected={selectedTickets.includes(ticket.id)}
@@ -232,7 +298,7 @@ const App = () => {
     assignee: '',
     sprint: 'Sprint 1',
   });
-  const [isLoading, setIsLoading] = useState(true); // Initial loading state
+  const [isLoading, setIsLoading] = useState(false); // Initial loading state
   const [loadingAction, setLoadingAction] = useState(false); // Loading state for actions
   const [errorMessage, setErrorMessage] = useState(''); // Error message state
   const [filters, setFilters] = useState({
@@ -244,25 +310,40 @@ const App = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null); // State for delete confirmation
   const [sortByColumn, setSortByColumn] = useState({}); // State for sorting per column
   const [selectedTickets, setSelectedTickets] = useState([]); // State for selected tickets
+  const [page, setPage] = useState(1); // Pagination page
+  const [totalPages, setTotalPages] = useState(1); // Total pages
+  const [totalTickets, setTotalTickets] = useState(0); // Total tickets
+  const limit = 10; // Tickets per page
 
-  // Fetch tickets from the backend
-  useEffect(() => {
-    fetchTickets();
-  }, []);
-
-  const fetchTickets = async () => {
+  // Fetch tickets from the backend with pagination
+  const fetchTickets = async (pageToFetch = page, append = false) => {
     try {
       setIsLoading(true);
       setErrorMessage('');
-      const response = await axios.get('http://localhost:5000/tickets');
-      const fetchedTickets = response.data;
-      setTickets(fetchedTickets);
-      applyFiltersAndSearch(fetchedTickets, filters, searchQuery);
+      const response = await axios.get(`http://localhost:5000/tickets?page=${pageToFetch}&limit=${limit}`);
+      const { tickets: fetchedTickets, total, page: currentPage, totalPages: pages } = response.data;
+
+      setTickets((prev) => (append ? [...prev, ...fetchedTickets] : fetchedTickets));
+      setTotalTickets(total);
+      setTotalPages(pages);
+      setPage(currentPage);
+      applyFiltersAndSearch(append ? [...tickets, ...fetchedTickets] : fetchedTickets, filters, searchQuery);
     } catch (error) {
       console.error('Failed to fetch tickets:', error);
       setErrorMessage('Failed to load tickets. Please try again later.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTickets();
+  }, []);
+
+  // Load more tickets
+  const loadMoreTickets = () => {
+    if (page < totalPages) {
+      fetchTickets(page + 1, true);
     }
   };
 
@@ -372,12 +453,12 @@ const App = () => {
       }
 
       // Fetch the latest data from the backend
-      await fetchTickets();
+      await fetchTickets(1);
       setSelectedTickets([]);
     } catch (error) {
       console.error('Failed to move tickets:', error);
       setErrorMessage('Failed to move tickets. Please try again.');
-      fetchTickets();
+      fetchTickets(1);
     } finally {
       setLoadingAction(false);
     }
@@ -407,12 +488,12 @@ const App = () => {
       }
 
       // Fetch the latest data from the backend
-      await fetchTickets();
+      await fetchTickets(1);
       setSelectedTickets([]);
     } catch (error) {
       console.error('Failed to assign tickets:', error);
       setErrorMessage('Failed to assign tickets. Please try again.');
-      fetchTickets();
+      fetchTickets(1);
     } finally {
       setLoadingAction(false);
     }
@@ -531,7 +612,7 @@ const App = () => {
         }
 
         // Fetch the latest data from the backend to ensure consistency
-        await fetchTickets();
+        await fetchTickets(1);
       }
 
       console.log('Move completed successfully');
@@ -539,7 +620,7 @@ const App = () => {
       console.error('Error in moveTicket:', error);
       setErrorMessage('Failed to move ticket. Please try again.');
       // Refresh the state from the backend to ensure consistency
-      fetchTickets();
+      fetchTickets(1);
     } finally {
       setLoadingAction(false);
     }
@@ -555,23 +636,13 @@ const App = () => {
       const ticket = columns[columnId].find((t) => t.id === ticketId);
       const updatedTicket = { ...ticket, assignee: newAssignee };
 
-      // Update ticket in the column
-      const updatedColumn = columns[columnId].map((t) =>
-        t.id === ticketId ? updatedTicket : t
-      );
-
-      setColumns({
-        ...columns,
-        [columnId]: updatedColumn,
-      });
-
       // Update ticket in the backend
       await axios.put(`http://localhost:5000/tickets/${ticketId}`, updatedTicket);
-      await fetchTickets(); // Refresh to ensure consistency
+      await fetchTickets(1); // Refresh to ensure consistency
     } catch (error) {
       console.error('Failed to assign ticket:', error);
       setErrorMessage('Failed to assign ticket. Please try again.');
-      fetchTickets(); // Refresh the state to ensure consistency
+      fetchTickets(1); // Refresh the state to ensure consistency
     } finally {
       setLoadingAction(false);
     }
@@ -603,11 +674,11 @@ const App = () => {
       }
 
       // Refresh tickets
-      await fetchTickets();
+      await fetchTickets(1);
     } catch (error) {
       console.error('Failed to delete ticket(s):', error);
       setErrorMessage('Failed to delete ticket(s). Please try again.');
-      fetchTickets(); // Refresh the state to ensure consistency
+      fetchTickets(1); // Refresh the state to ensure consistency
     } finally {
       setLoadingAction(false);
       setShowDeleteConfirm(null);
@@ -624,23 +695,40 @@ const App = () => {
       const ticket = columns[columnId].find((t) => t.id === ticketId);
       const updatedTicket = { ...ticket, ...updatedData };
 
-      // Update ticket in the column
-      const updatedColumn = columns[columnId].map((t) =>
-        t.id === ticketId ? updatedTicket : t
-      );
-
-      setColumns({
-        ...columns,
-        [columnId]: updatedColumn,
-      });
-
       // Update ticket in the backend
       await axios.put(`http://localhost:5000/tickets/${ticketId}`, updatedTicket);
-      await fetchTickets(); // Refresh to ensure consistency
+      await fetchTickets(1); // Refresh to ensure consistency
     } catch (error) {
       console.error('Failed to edit ticket:', error);
       setErrorMessage('Failed to edit ticket. Please try again.');
-      fetchTickets(); // Refresh the state to ensure consistency
+      fetchTickets(1); // Refresh the state to ensure consistency
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  // Handle adding a comment to a ticket
+  const handleAddComment = async (ticketId, columnId, commentText) => {
+    if (isLoading || loadingAction) return;
+
+    try {
+      setLoadingAction(true);
+      setErrorMessage('');
+      const ticket = columns[columnId].find((t) => t.id === ticketId);
+      const newComment = {
+        text: commentText,
+        timestamp: new Date().toISOString(),
+      };
+      const updatedComments = [...(ticket.comments || []), newComment];
+      const updatedTicket = { ...ticket, comments: updatedComments };
+
+      // Update ticket in the backend
+      await axios.put(`http://localhost:5000/tickets/${ticketId}`, updatedTicket);
+      await fetchTickets(1); // Refresh to ensure consistency
+    } catch (error) {
+      console.error('Failed to add comment:', error);
+      setErrorMessage('Failed to add comment. Please try again.');
+      fetchTickets(1); // Refresh the state to ensure consistency
     } finally {
       setLoadingAction(false);
     }
@@ -658,7 +746,7 @@ const App = () => {
       const createdTicket = response.data;
 
       // Refresh tickets
-      await fetchTickets();
+      await fetchTickets(1);
 
       // Reset form
       setNewTicket({
@@ -709,7 +797,7 @@ const App = () => {
           </div>
         )}
 
-        {isLoading ? (
+        {isLoading && tickets.length === 0 ? (
           <div className="loading">Loading tickets...</div>
         ) : (
           <>
@@ -911,6 +999,7 @@ const App = () => {
                   handleAssign={handleAssign}
                   handleDelete={handleDelete}
                   handleEdit={handleEdit}
+                  handleAddComment={handleAddComment}
                   isLoading={isLoading}
                   loadingAction={loadingAction}
                   sortBy={sortByColumn[columnId] || 'order'}
@@ -920,6 +1009,18 @@ const App = () => {
                 />
               ))}
             </div>
+
+            {/* Load More Button */}
+            {tickets.length < totalTickets && (
+              <div className="load-more">
+                <button onClick={loadMoreTickets} disabled={isLoading || loadingAction}>
+                  {isLoading ? 'Loading...' : 'Load More'}
+                </button>
+                <p>
+                  Showing {tickets.length} of {totalTickets} tickets
+                </p>
+              </div>
+            )}
           </>
         )}
       </div>
