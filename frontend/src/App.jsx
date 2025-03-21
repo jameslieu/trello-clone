@@ -188,7 +188,7 @@ const App = () => {
     }
 
     try {
-      console.log(`Moving ticket ${ticketId} from ${sourceColumnId} to ${destColumnId}`);
+      console.log(`Moving ticket ${ticketId} from ${sourceColumnId} (index ${dragIndex}) to ${destColumnId}${hoverIndex !== null ? ` (index ${hoverIndex})` : ''}`);
 
       // Create a deep copy of the columns to avoid mutating state directly
       const newColumns = { ...columns };
@@ -236,7 +236,7 @@ const App = () => {
 
         // Update all tickets in the backend with a slight delay between requests
         for (const ticket of updatedDestColumn) {
-          console.log(`Updating ticket ${ticket.id} with order ${ticket.order}`);
+          console.log(`Updating ticket ${ticket.id} with order ${ticket.order} in column ${sourceColumnId}`);
           await axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket);
           await delay(50); // Add a 50ms delay to avoid overwhelming the backend
         }
@@ -266,6 +266,12 @@ const App = () => {
         // Update columns state
         newColumns[sourceColumnId] = updatedSourceColumn;
         newColumns[destColumnId] = updatedDestColumn;
+
+        // Log the state before updating
+        console.log('Before state update:');
+        console.log(`Source column (${sourceColumnId}):`, updatedSourceColumn);
+        console.log(`Destination column (${destColumnId}):`, updatedDestColumn);
+
         setColumns(newColumns);
 
         // Update all tickets in the backend (for both source and destination columns)
@@ -275,6 +281,9 @@ const App = () => {
           await axios.put(`http://localhost:5000/tickets/${ticket.id}`, ticket);
           await delay(50); // Add a 50ms delay to avoid overwhelming the backend
         }
+
+        // Fetch the latest data from the backend to ensure consistency
+        await fetchTickets();
       }
 
       console.log('Move completed successfully');
@@ -305,6 +314,7 @@ const App = () => {
 
       // Update ticket in the backend
       await axios.put(`http://localhost:5000/tickets/${ticketId}`, updatedTicket);
+      await fetchTickets(); // Refresh to ensure consistency
     } catch (error) {
       console.error('Failed to assign ticket:', error);
       fetchTickets(); // Refresh the state to ensure consistency
