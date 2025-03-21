@@ -2,6 +2,13 @@
   padding: 20px;
 }
 
+.loading {
+  text-align: center;
+  font-size: 18px;
+  color: #555;
+  margin: 20px 0;
+}
+
 .create-ticket {
   margin-bottom: 20px;
   padding: 20px;
@@ -51,6 +58,11 @@
   background-color: #0056b3;
 }
 
+.create-ticket button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
 .board {
   display: flex;
   gap: 20px;
@@ -82,20 +94,19 @@
   padding: 10px;
   margin-bottom: 10px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  border: 2px solid transparent; /* Default border */
+  border: 2px solid transparent;
 }
 
-/* Color-coding based on priority */
 .ticket.high {
-  border-color: #ff4d4f; /* Red for High priority */
+  border-color: #ff4d4f;
 }
 
 .ticket.medium {
-  border-color: #ffeb3b; /* Yellow for Medium priority */
+  border-color: #ffeb3b;
 }
 
 .ticket.low {
-  border-color: #52c41a; /* Green for Low priority */
+  border-color: #52c41a;
 }
 
 .ticket h3 {
@@ -115,6 +126,11 @@ select {
   width: 100%;
 }
 
+select:disabled {
+  background-color: #f0f0f0;
+  cursor: not-allowed;
+}
+
 .delete-button {
   margin-top: 10px;
   padding: 5px 10px;
@@ -127,4 +143,9 @@ select {
 
 .delete-button:hover {
   background-color: #d9363e;
+}
+
+.delete-button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
 }

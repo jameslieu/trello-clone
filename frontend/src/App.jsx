@@ -27,7 +27,7 @@ const priorityWeights = {
 };
 
 // Ticket component (draggable)
-const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete }) => {
+const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelete, isLoading }) => {
   const ref = useRef(null);
 
   const [{ isDragging }, drag] = useDrag(() => ({
@@ -36,12 +36,13 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
+    canDrag: !isLoading, // Prevent dragging while loading
   }));
 
   const [, drop] = useDrop(() => ({
     accept: ItemTypes.TICKET,
     hover: (item, monitor) => {
-      if (!ref.current) return;
+      if (!ref.current || isLoading) return;
 
       const dragIndex = item.index;
       const hoverIndex = index;
@@ -75,6 +76,7 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
         <select
           onChange={(e) => handleAssign(ticket.id, columnId, e.target.value)}
           defaultValue=""
+          disabled={isLoading}
         >
           <option value="" disabled>
             Assign to...
@@ -85,7 +87,11 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
           <option value="Diana">Diana</option>
         </select>
       )}
-      <button className="delete-button" onClick={() => handleDelete(ticket.id, columnId)}>
+      <button
+        className="delete-button"
+        onClick={() => handleDelete(ticket.id, columnId)}
+        disabled={isLoading}
+      >
         Delete
       </button>
     </div>
@@ -93,10 +99,11 @@ const Ticket = ({ ticket, index, columnId, moveTicket, handleAssign, handleDelet
 };
 
 // Column component (droppable)
-const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete }) => {
+const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete, isLoading }) => {
   const [{ isOver }, drop] = useDrop(() => ({
     accept: ItemTypes.TICKET,
     drop: (item, monitor) => {
+      if (isLoading) return;
       if (item.columnId !== columnId) {
         // Move ticket to a new column
         moveTicket(item.id, item.columnId, columnId, item.index, null);
@@ -120,6 +127,7 @@ const Column = ({ columnId, tickets, moveTicket, handleAssign, handleDelete }) =
             moveTicket={moveTicket}
             handleAssign={handleAssign}
             handleDelete={handleDelete}
+            isLoading={isLoading}
           />
         ))}
       </div>
@@ -138,6 +146,7 @@ const App = () => {
     assignee: '',
     sprint: 'Sprint 1',
   });
+  const [isLoading, setIsLoading] = useState(true); // Add loading state
 
   // Fetch tickets from the backend
   useEffect(() => {
@@ -146,6 +155,7 @@ const App = () => {
 
   const fetchTickets = async () => {
     try {
+      setIsLoading(true);
       const response = await axios.get('http://localhost:5000/tickets');
       const fetchedTickets = response.data;
 
@@ -162,6 +172,8 @@ const App = () => {
       setTickets(fetchedTickets);
     } catch (error) {
       console.error('Failed to fetch tickets:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -170,11 +182,23 @@ const App = () => {
 
   // Handle ticket movement between columns or within the same column
   const moveTicket = async (ticketId, sourceColumnId, destColumnId, dragIndex, hoverIndex) => {
+    if (isLoading) {
+      console.log('Move aborted: App is still loading');
+      return;
+    }
+
     try {
       console.log(`Moving ticket ${ticketId} from ${sourceColumnId} to ${destColumnId}`);
 
       // Create a deep copy of the columns to avoid mutating state directly
       const newColumns = { ...columns };
+
+      // Check if sourceColumnId exists in newColumns
+      if (!newColumns[sourceColumnId] || !Array.isArray(newColumns[sourceColumnId])) {
+        console.error(`Source column ${sourceColumnId} is not iterable:`, newColumns[sourceColumnId]);
+        return;
+      }
+
       const sourceColumn = [...newColumns[sourceColumnId]];
       const ticketIndex = sourceColumn.findIndex((t) => t.id === ticketId);
 
@@ -217,6 +241,12 @@ const App = () => {
           await delay(50); // Add a 50ms delay to avoid overwhelming the backend
         }
       } else {
+        // Check if destColumnId exists in newColumns
+        if (!newColumns[destColumnId] || !Array.isArray(newColumns[destColumnId])) {
+          console.error(`Destination column ${destColumnId} is not iterable:`, newColumns[destColumnId]);
+          return;
+        }
+
         // Moving to a different column
         const destColumn = [...newColumns[destColumnId]];
         destColumn.push(updatedTicket);
@@ -257,6 +287,8 @@ const App = () => {
 
   // Handle assignee change
   const handleAssign = async (ticketId, columnId, newAssignee) => {
+    if (isLoading) return;
+
     try {
       const ticket = columns[columnId].find((t) => t.id === ticketId);
       const updatedTicket = { ...ticket, assignee: newAssignee };
@@ -281,6 +313,8 @@ const App = () => {
 
   // Handle ticket deletion
   const handleDelete = async (ticketId, columnId) => {
+    if (isLoading) return;
+
     try {
       await axios.delete(`http://localhost:5000/tickets/${ticketId}`);
 
@@ -295,6 +329,8 @@ const App = () => {
   // Handle new ticket form submission
   const handleCreateTicket = async (e) => {
     e.preventDefault();
+    if (isLoading) return;
+
     try {
       const response = await axios.post('http://localhost:5000/tickets', newTicket);
       const createdTicket = response.data;
@@ -320,86 +356,100 @@ const App = () => {
       <div className="app">
         <h1>Trello Clone</h1>
 
-        {/* Form to create a new ticket */}
-        <div className="create-ticket">
-          <h2>Create New Ticket</h2>
-          <form onSubmit={handleCreateTicket}>
-            <div>
-              <label>Title:</label>
-              <input
-                type="text"
-                value={newTicket.title}
-                onChange={(e) =>
-                  setNewTicket({ ...newTicket, title: e.target.value })
-                }
-                required
-              />
+        {isLoading ? (
+          <div className="loading">Loading tickets...</div>
+        ) : (
+          <>
+            {/* Form to create a new ticket */}
+            <div className="create-ticket">
+              <h2>Create New Ticket</h2>
+              <form onSubmit={handleCreateTicket}>
+                <div>
+                  <label>Title:</label>
+                  <input
+                    type="text"
+                    value={newTicket.title}
+                    onChange={(e) =>
+                      setNewTicket({ ...newTicket, title: e.target.value })
+                    }
+                    required
+                    disabled={isLoading}
+                  />
+                </div>
+                <div>
+                  <label>Description:</label>
+                  <textarea
+                    value={newTicket.description}
+                    onChange={(e) =>
+                      setNewTicket({ ...newTicket, description: e.target.value })
+                    }
+                    required
+                    disabled={isLoading}
+                  />
+                </div>
+                <div>
+                  <label>Priority:</label>
+                  <select
+                    value={newTicket.priority}
+                    onChange={(e) =>
+                      setNewTicket({ ...newTicket, priority: e.target.value })
+                    }
+                    disabled={isLoading}
+                  >
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Assignee:</label>
+                  <select
+                    value={newTicket.assignee}
+                    onChange={(e) =>
+                      setNewTicket({ ...newTicket, assignee: e.target.value })
+                    }
+                    disabled={isLoading}
+                  >
+                    <option value="">Unassigned</option>
+                    <option value="Alice">Alice</option>
+                    <option value="Bob">Bob</option>
+                    <option value="Charlie">Charlie</option>
+                    <option value="Diana">Diana</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Sprint:</label>
+                  <input
+                    type="text"
+                    value={newTicket.sprint}
+                    onChange={(e) =>
+                      setNewTicket({ ...newTicket, sprint: e.target.value })
+                    }
+                    disabled={isLoading}
+                  />
+                </div>
+                <button type="submit" disabled={isLoading}>
+                  Create Ticket
+                </button>
+              </form>
             </div>
-            <div>
-              <label>Description:</label>
-              <textarea
-                value={newTicket.description}
-                onChange={(e) =>
-                  setNewTicket({ ...newTicket, description: e.target.value })
-                }
-                required
-              />
-            </div>
-            <div>
-              <label>Priority:</label>
-              <select
-                value={newTicket.priority}
-                onChange={(e) =>
-                  setNewTicket({ ...newTicket, priority: e.target.value })
-                }
-              >
-                <option value="High">High</option>
-                <option value="Medium">Medium</option>
-                <option value="Low">Low</option>
-              </select>
-            </div>
-            <div>
-              <label>Assignee:</label>
-              <select
-                value={newTicket.assignee}
-                onChange={(e) =>
-                  setNewTicket({ ...newTicket, assignee: e.target.value })
-                }
-              >
-                <option value="">Unassigned</option>
-                <option value="Alice">Alice</option>
-                <option value="Bob">Bob</option>
-                <option value="Charlie">Charlie</option>
-                <option value="Diana">Diana</option>
-              </select>
-            </div>
-            <div>
-              <label>Sprint:</label>
-              <input
-                type="text"
-                value={newTicket.sprint}
-                onChange={(e) =>
-                  setNewTicket({ ...newTicket, sprint: e.target.value })
-                }
-              />
-            </div>
-            <button type="submit">Create Ticket</button>
-          </form>
-        </div>
 
-        {/* Kanban Board */}
-        <div className="board">
-          {columnsOrder.map((columnId) => (
-            <Column
-              key={columnId}
-              columnId={columnId}
-              tickets={columns[columnId] || []}
-              moveTicket={moveTicket}
-              handleAssign={handleAssign}
-              handleDelete={handleDelete}
-            />
-          ))}
-        </div>
+            {/* Kanban Board */}
+            <div className="board">
+              {columnsOrder.map((columnId) => (
+                <Column
+                  key={columnId}
+                  columnId={columnId}
+                  tickets={columns[columnId] || []}
+                  moveTicket={moveTicket}
+                  handleAssign={handleAssign}
+                  handleDelete={handleDelete}
+                  isLoading={isLoading}
+                />
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </DndProvider>
   );
